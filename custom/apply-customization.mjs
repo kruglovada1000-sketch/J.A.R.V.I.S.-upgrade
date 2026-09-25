@@ -46,22 +46,18 @@ function appendContextToPrompt(relativePath, exportPrefix) {
 appendContextToPrompt('bridge/server.mjs', 'const SYSTEM_PROMPT = `')
 appendContextToPrompt('src/config.ts', 'export const SYSTEM_PROMPT = `')
 
-// Add the OpenAI-compatible bridge beside the original Claude bridge.
 copyFileSync(join(here, 'openai-koda.mjs'), join(target, 'bridge/openai-koda.mjs'))
 
-// Make npm start choose the brain without changing the browser/UI layer.
 {
   const path = join(target, 'scripts/start.mjs')
   let text = readFileSync(path, 'utf8')
   const oldLine = "run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv)"
-  const replacement = `const engine = (process.env.JARVIS_ENGINE ?? 'claude').toLowerCase()\nconst bridgeEntry = engine === 'openai' ? 'bridge/openai-koda.mjs' : 'bridge/server.mjs'\nconsole.log(\`  brain engine: \${engine === 'openai' ? 'OpenAI' : 'Claude'}\\n\`)\nrun('bridge', 'node', [bridgeEntry], '36', bridgeEnv)`
+  const replacement = `const engine = process.argv.includes('--openai')\n  ? 'openai'\n  : process.argv.includes('--claude')\n    ? 'claude'\n    : (process.env.JARVIS_ENGINE ?? 'claude').toLowerCase()\nconst bridgeEntry = engine === 'openai' ? 'bridge/openai-koda.mjs' : 'bridge/server.mjs'\nconsole.log(\`  brain engine: \${engine === 'openai' ? 'OpenAI' : 'Claude'}\\n\`)\nrun('bridge', 'node', [bridgeEntry], '36', bridgeEnv)`
   if (!text.includes(oldLine)) throw new Error('Bridge launch line not found in scripts/start.mjs')
   text = text.replace(oldLine, replacement)
   writeFileSync(path, text)
 }
 
-// The upstream voice picker prefers English voices only. Keep that behaviour
-// for English, but automatically choose an installed Russian voice for Cyrillic.
 {
   const path = join(target, 'src/lib/tts.ts')
   let text = readFileSync(path, 'utf8')
@@ -94,8 +90,8 @@ copyFileSync(join(here, 'openai-koda.mjs'), join(target, 'bridge/openai-koda.mjs
   const pkg = JSON.parse(readFileSync(path, 'utf8'))
   pkg.name = 'jarvis-koda'
   pkg.description = 'Dual-engine JARVIS customised for ohrana.tech, Upgrade and the Ruskorporatsiya workflow.'
-  pkg.scripts['start:openai'] = 'JARVIS_ENGINE=openai node scripts/start.mjs'
-  pkg.scripts['start:claude'] = 'JARVIS_ENGINE=claude node scripts/start.mjs'
+  pkg.scripts['start:openai'] = 'node scripts/start.mjs --openai'
+  pkg.scripts['start:claude'] = 'node scripts/start.mjs --claude'
   writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n')
 }
 
