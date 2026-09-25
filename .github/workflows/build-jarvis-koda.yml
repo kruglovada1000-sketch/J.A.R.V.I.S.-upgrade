@@ -1,0 +1,58 @@
+name: Build JARVIS KODA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "custom/**"
+      - "INSTALL-RU.md"
+      - ".github/workflows/build-jarvis-koda.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build customised JARVIS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout JARVIS KODA wrapper
+        uses: actions/checkout@v5
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Clone upstream JARVIS
+        run: git clone --depth 1 https://github.com/adewaskar/jarvis.git jarvis-koda
+
+      - name: Apply Ruskorporatsiya / KODA custom layer
+        run: node custom/apply-customization.mjs jarvis-koda
+
+      - name: Install dependencies
+        working-directory: jarvis-koda
+        run: npm ci
+
+      - name: Validate build
+        working-directory: jarvis-koda
+        run: npm run build
+
+      - name: Add install guide to package
+        run: cp INSTALL-RU.md jarvis-koda/INSTALL-RU.md
+
+      - name: Remove build-only folders
+        run: |
+          rm -rf jarvis-koda/node_modules
+          rm -rf jarvis-koda/dist
+          rm -rf jarvis-koda/.git
+
+      - name: Upload ready source package
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-koda-ready
+          path: jarvis-koda/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
