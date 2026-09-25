@@ -35,9 +35,29 @@ jobs:
         working-directory: jarvis-koda
         run: npm ci
 
-      - name: Validate build
+      - name: Validate frontend build
         working-directory: jarvis-koda
         run: npm run build
+
+      - name: Validate OpenAI bridge syntax
+        working-directory: jarvis-koda
+        run: node --check bridge/openai-koda.mjs
+
+      - name: Smoke test OpenAI bridge health
+        working-directory: jarvis-koda
+        run: |
+          JARVIS_BRIDGE_PORT=8789 node bridge/openai-koda.mjs > /tmp/jarvis-openai.log 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8789/health | grep -q '"engine":"openai"'; then
+              echo "OpenAI bridge health check passed"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat /tmp/jarvis-openai.log
+          exit 1
 
       - name: Add install guide to package
         run: cp INSTALL-RU.md jarvis-koda/INSTALL-RU.md
