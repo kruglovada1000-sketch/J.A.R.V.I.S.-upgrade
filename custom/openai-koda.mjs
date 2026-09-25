@@ -53,7 +53,7 @@ function extractText(response) {
 }
 
 function send(ws, frame) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame))
+  if (ws.readyState === 1) ws.send(JSON.stringify(frame))
 }
 
 const server = createServer((req, res) => {
@@ -143,8 +143,6 @@ wss.on('connection', (ws) => {
       const text = extractText(body)
       if (!text) throw new Error('OpenAI вернул ответ без текста.')
 
-      // The existing JARVIS frontend speaks every text delta it receives.
-      // Send modest chunks so its sentence queue can begin immediately.
       for (let i = 0; i < text.length; i += 80) {
         if (controller.signal.aborted) return
         send(ws, { type: 'text', ask, delta: text.slice(i, i + 80) })
