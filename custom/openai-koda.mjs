@@ -7,6 +7,7 @@ const PORT = Number(process.env.JARVIS_BRIDGE_PORT ?? 8787)
 const MODEL = process.env.JARVIS_OPENAI_MODEL ?? 'gpt-5.6-sol'
 const EFFORT = process.env.JARVIS_OPENAI_EFFORT ?? 'medium'
 const API_KEY = process.env.OPENAI_API_KEY ?? ''
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/+$/, '')
 const EXTRA_ORIGINS = new Set(
   (process.env.JARVIS_ALLOWED_ORIGINS ?? '')
     .split(',')
@@ -123,7 +124,7 @@ wss.on('connection', (ws) => {
       }
       if (previousResponseId) payload.previous_response_id = previousResponseId
 
-      const res = await fetch('https://api.openai.com/v1/responses', {
+      const res = await fetch(`${OPENAI_BASE_URL}/responses`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${API_KEY}`,
