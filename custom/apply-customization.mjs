@@ -46,6 +46,32 @@ function appendContextToPrompt(relativePath, exportPrefix) {
 appendContextToPrompt('bridge/server.mjs', 'const SYSTEM_PROMPT = `')
 appendContextToPrompt('src/config.ts', 'export const SYSTEM_PROMPT = `')
 
+// Add the OpenAI-compatible bridge beside the original Claude bridge.
+copyFileSync(join(here, 'openai-koda.mjs'), join(target, 'bridge/openai-koda.mjs'))
+
+// Make npm start choose the brain without changing the browser/UI layer.
+{
+  const path = join(target, 'scripts/start.mjs')
+  let text = readFileSync(path, 'utf8')
+  const oldLine = "run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv)"
+  const replacement = `const engine = (process.env.JARVIS_ENGINE ?? 'claude').toLowerCase()\nconst bridgeEntry = engine === 'openai' ? 'bridge/openai-koda.mjs' : 'bridge/server.mjs'\nconsole.log(\`  brain engine: \${engine === 'openai' ? 'OpenAI' : 'Claude'}\\n\`)\nrun('bridge', 'node', [bridgeEntry], '36', bridgeEnv)`
+  if (!text.includes(oldLine)) throw new Error('Bridge launch line not found in scripts/start.mjs')
+  text = text.replace(oldLine, replacement)
+  writeFileSync(path, text)
+}
+
+// The upstream voice picker prefers English voices only. Keep that behaviour
+// for English, but automatically choose an installed Russian voice for Cyrillic.
+{
+  const path = join(target, 'src/lib/tts.ts')
+  let text = readFileSync(path, 'utf8')
+  const oldBlock = `      const u = new SpeechSynthesisUtterance(text)\n      const voice = pickVoice()\n      if (voice) u.voice = voice\n      u.lang = voice?.lang ?? 'en-GB'`
+  const newBlock = `      const u = new SpeechSynthesisUtterance(text)\n      const isRussian = /[А-Яа-яЁё]/.test(text)\n      const russianVoice = isRussian\n        ? speechSynthesis.getVoices().find((v) => /^ru/i.test(v.lang)) ?? null\n        : null\n      const voice = isRussian ? russianVoice : pickVoice()\n      if (voice) u.voice = voice\n      u.lang = isRussian ? (russianVoice?.lang ?? 'ru-RU') : (voice?.lang ?? 'en-GB')`
+  if (!text.includes(oldBlock)) throw new Error('Native TTS voice block not found in src/lib/tts.ts')
+  text = text.replace(oldBlock, newBlock)
+  writeFileSync(path, text)
+}
+
 {
   const path = join(target, 'index.html')
   let text = readFileSync(path, 'utf8')
@@ -57,7 +83,7 @@ appendContextToPrompt('src/config.ts', 'export const SYSTEM_PROMPT = `')
 {
   const path = join(target, 'src/ui/Boot.tsx')
   let text = readFileSync(path, 'utf8')
-  const replacement = `const LOG = [\n  'RUSCORP PROJECT PROFILE ........ OK',\n  'OHRANA.TECH CONTEXT ............ LOADED',\n  'UPGRADE TOOLCHAIN .............. READY',\n  'GITHUB SAFETY GATE ............. ARMED',\n  'SEO / LINKS / LIGHTHOUSE ....... READY',\n  'VOICE INTERFACE ................ ONLINE',\n]`
+  const replacement = `const LOG = [\n  'RUSCORP PROJECT PROFILE ........ OK',\n  'OHRANA.TECH CONTEXT ............ LOADED',\n  'UPGRADE TOOLCHAIN .............. READY',\n  'GPT / CLAUDE ENGINE ............ READY',\n  'GITHUB SAFETY GATE ............. ARMED',\n  'VOICE INTERFACE ................ ONLINE',\n]`
   const next = text.replace(/const LOG = \[[\s\S]*?\n\]/, replacement)
   if (next === text) throw new Error('Boot LOG block not found')
   writeFileSync(path, next)
@@ -67,13 +93,15 @@ appendContextToPrompt('src/config.ts', 'export const SYSTEM_PROMPT = `')
   const path = join(target, 'package.json')
   const pkg = JSON.parse(readFileSync(path, 'utf8'))
   pkg.name = 'jarvis-koda'
-  pkg.description = 'JARVIS customised for ohrana.tech, Upgrade and the Ruskorporatsiya workflow.'
+  pkg.description = 'Dual-engine JARVIS customised for ohrana.tech, Upgrade and the Ruskorporatsiya workflow.'
+  pkg.scripts['start:openai'] = 'JARVIS_ENGINE=openai node scripts/start.mjs'
+  pkg.scripts['start:claude'] = 'JARVIS_ENGINE=claude node scripts/start.mjs'
   writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n')
 }
 
 copyFileSync(join(here, 'PROJECT-CONTEXT.md'), join(target, 'KODA-PROJECT-CONTEXT.md'))
 
-const notice = `# JARVIS // KODA\n\nThis build is derived from adewaskar/jarvis under the MIT License.\nUpstream project: https://github.com/adewaskar/jarvis\n\nCustom layer: kruglovada1000-sketch/J.A.R.V.I.S.-upgrade\nPrimary projects: ohrana.tech and Upgrade.\n`
+const notice = `# JARVIS // KODA\n\nThis build is derived from adewaskar/jarvis under the MIT License.\nUpstream project: https://github.com/adewaskar/jarvis\n\nCustom layer: kruglovada1000-sketch/J.A.R.V.I.S.-upgrade\nPrimary projects: ohrana.tech and Upgrade.\nEngines: OpenAI Responses API or Claude Code.\n`
 writeFileSync(join(target, 'KODA-NOTICE.md'), notice)
 
-console.log('JARVIS // KODA customization applied successfully.')
+console.log('JARVIS // KODA dual-engine customization applied successfully.')
