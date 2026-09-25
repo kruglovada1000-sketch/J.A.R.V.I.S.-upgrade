@@ -1,0 +1,201 @@
+name: Audit ohrana.tech
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/audit-ohrana-tech.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: SEO, sitemap, links and Lighthouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout audit wrapper
+        uses: actions/checkout@v5
+
+      - name: Audit sitemap and the 25 new articles
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures, html, json, re, sys, urllib.request
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          BASE = 'https://ohrana.tech'
+          NEW = [
+            'chto-delat-esli-ohrannik-ne-vyshel-na-smenu.html',
+            'srok-zapuska-ohrany-novogo-obekta.html',
+            'zamena-ohrannika-po-trebovaniyu-zakazchika.html',
+            'otvetstvennost-choo-za-propazhu-imushchestva.html',
+            'dokumenty-choo-do-nachala-ohrany.html',
+            'zhurnaly-i-dokumenty-na-postu-ohrany.html',
+            'imeet-li-ohrannik-pravo-osmatrivat-sumki-avtomobil.html',
+            'mozhet-li-chastnyy-ohrannik-zaderzhat-narushitelya.html',
+            'posetitel-otkazyvaetsya-soblyudat-propusknoy-rezhim.html',
+            'dopusk-podryadchikov-kurerov-vremennyh-rabotnikov.html',
+            'poteryan-propusk-klyuch-karta-dostupa.html',
+            'kontrol-vezda-vyezda-transporta.html',
+            'ohrana-pogruzki-i-razgruzki.html',
+            'kogda-nuzhen-starshiy-smeny-ohrany.html',
+            'otvetstvennost-choo-i-sluzhby-bezopasnosti-zakazchika.html',
+            'ohrana-pri-otklyuchenii-elektrichestva-interneta-skud.html',
+            'zashchita-ohrannoy-signalizacii-ot-glusheniya.html',
+            'kak-umenshit-lozhnye-trevogi.html',
+            'nuzhna-li-trevozhnaya-knopka-esli-est-kamery.html',
+            'kak-bystro-dolzhna-priehat-gbr.html',
+            'usilenie-ohrany-nochyu-vyhodnye-prazdniki.html',
+            'ohrana-obekta-vo-vremya-remonta-pereezda.html',
+            'kak-zashchitit-dachu-zimoy.html',
+            'kak-usilit-ohranu-sklada-v-pikovyy-sezon.html',
+            'chop-choo-vnevedomstvennaya-ohrana-raznica.html',
+          ]
+
+          def get(url, timeout=15):
+            req = urllib.request.Request(url, headers={'User-Agent':'JARVIS-KODA-Site-Audit/1.0'})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+              return r.getcode(), r.geturl(), r.read().decode('utf-8', 'replace')
+
+          critical = []
+          warnings = []
+          report = ['# ohrana.tech audit', '']
+
+          code, _, sm = get(BASE + '/sitemap.xml')
+          if code != 200:
+            critical.append(f'sitemap.xml HTTP {code}')
+            urls = []
+          else:
+            root = ET.fromstring(sm)
+            ns = {'s':'http://www.sitemaps.org/schemas/sitemap/0.9'}
+            urls = [x.text.strip() for x in root.findall('s:url/s:loc', ns) if x.text]
+
+          report += [f'- Sitemap URLs: **{len(urls)}**', '']
+          expected = [f'{BASE}/stati/{x}' for x in NEW]
+          for u in expected:
+            n = urls.count(u)
+            if n != 1:
+              critical.append(f'sitemap count {n}: {u}')
+
+          def check_new(u):
+            out = {'url':u, 'critical':[], 'warnings':[]}
+            try:
+              code, final, text = get(u)
+            except Exception as e:
+              out['critical'].append(f'fetch failed: {e}')
+              return out
+            if code != 200:
+              out['critical'].append(f'HTTP {code}')
+              return out
+            if final.rstrip('/') != u.rstrip('/'):
+              out['warnings'].append(f'redirected to {final}')
+            low = text.lower()
+            if 'noindex' in low:
+              out['critical'].append('contains noindex')
+            title = re.search(r'<title[^>]*>(.*?)</title>', text, re.I|re.S)
+            desc = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']', text, re.I|re.S)
+            canonical = re.search(r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\'](.*?)["\']', text, re.I|re.S)
+            h1s = re.findall(r'<h1\b', text, re.I)
+            if not title: out['critical'].append('missing title')
+            elif not (25 <= len(html.unescape(re.sub('<.*?>','', title.group(1))).strip()) <= 80): out['warnings'].append('title length outside 25-80')
+            if not desc: out['critical'].append('missing meta description')
+            elif not (70 <= len(html.unescape(desc.group(1)).strip()) <= 200): out['warnings'].append('description length outside 70-200')
+            if not canonical: out['critical'].append('missing canonical')
+            elif canonical.group(1).strip() != u: out['critical'].append(f'canonical mismatch: {canonical.group(1).strip()}')
+            if len(h1s) != 1: out['critical'].append(f'H1 count {len(h1s)}')
+            if '"@type":"article"' not in low and '"@type": "article"' not in low: out['critical'].append('missing Article JSON-LD')
+            for prop in ('og:title','og:description','og:image','og:url'):
+              if prop not in low: out['warnings'].append(f'missing {prop}')
+            return out
+
+          with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            results = list(ex.map(check_new, expected))
+
+          report += ['## 25 new articles', '', '| Page | Result |', '|---|---|']
+          for r in results:
+            critical += [f"{r['url']}: {x}" for x in r['critical']]
+            warnings += [f"{r['url']}: {x}" for x in r['warnings']]
+            status = 'FAIL: ' + '; '.join(r['critical']) if r['critical'] else ('WARN: ' + '; '.join(r['warnings']) if r['warnings'] else 'OK')
+            report.append(f"| `{r['url'].split('/')[-1]}` | {status} |")
+
+          # Fast whole-sitemap availability pass.
+          def status(u):
+            try:
+              code, final, _ = get(u, timeout=12)
+              return u, code, final
+            except Exception as e:
+              return u, 0, str(e)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+            all_status = list(ex.map(status, urls))
+          broken = [(u,c,f) for u,c,f in all_status if c != 200]
+          for u,c,f in broken:
+            warnings.append(f'sitemap URL HTTP {c}: {u} ({f})')
+
+          report += ['', '## Whole sitemap availability', '', f'- Checked: **{len(all_status)}** URLs', f'- Non-200: **{len(broken)}**', '']
+          if warnings:
+            report += ['## Warnings', ''] + [f'- {x}' for x in warnings[:100]] + ['']
+          if critical:
+            report += ['## Critical', ''] + [f'- {x}' for x in critical] + ['']
+          else:
+            report += ['## Critical', '', '- None', '']
+
+          Path('audit-report.md').write_text('\n'.join(report), encoding='utf-8')
+          print('\n'.join(report))
+          if critical:
+            sys.exit(2)
+          PY
+
+      - name: Install Lighthouse
+        if: always()
+        run: npm install --global lighthouse@12
+
+      - name: Lighthouse — home
+        if: always()
+        run: lighthouse https://ohrana.tech/ --chrome-flags="--headless --no-sandbox" --only-categories=performance,accessibility,best-practices,seo --output=json --output-path=lh-home.json --quiet
+
+      - name: Lighthouse — articles index
+        if: always()
+        run: lighthouse https://ohrana.tech/stati/ --chrome-flags="--headless --no-sandbox" --only-categories=performance,accessibility,best-practices,seo --output=json --output-path=lh-stati.json --quiet
+
+      - name: Lighthouse — new article
+        if: always()
+        run: lighthouse https://ohrana.tech/stati/chto-delat-esli-ohrannik-ne-vyshel-na-smenu.html --chrome-flags="--headless --no-sandbox" --only-categories=performance,accessibility,best-practices,seo --output=json --output-path=lh-article.json --quiet
+
+      - name: Add Lighthouse scores to report
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows=[]
+          for name, path in [('Home','lh-home.json'),('Articles','lh-stati.json'),('New article','lh-article.json')]:
+            p=Path(path)
+            if not p.exists():
+              rows.append((name,'n/a','n/a','n/a','n/a'))
+              continue
+            j=json.loads(p.read_text())
+            c=j.get('categories',{})
+            score=lambda k: round((c.get(k,{}).get('score') or 0)*100)
+            rows.append((name,score('performance'),score('accessibility'),score('best-practices'),score('seo')))
+          with open('audit-report.md','a',encoding='utf-8') as f:
+            f.write('\n## Lighthouse\n\n| Page | Performance | Accessibility | Best practices | SEO |\n|---|---:|---:|---:|---:|\n')
+            for r in rows: f.write('| ' + ' | '.join(map(str,r)) + ' |\n')
+          print(Path('audit-report.md').read_text())
+          PY
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ohrana-tech-audit
+          path: |
+            audit-report.md
+            lh-*.json
+          if-no-files-found: warn
+          retention-days: 14
