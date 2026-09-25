@@ -59,6 +59,88 @@ jobs:
           cat /tmp/jarvis-openai.log
           exit 1
 
+      - name: Integration test GPT response through JARVIS transport
+        working-directory: jarvis-koda
+        run: |
+          cat > .ci-mock-openai.mjs <<'NODE'
+          import { createServer } from 'node:http'
+          const server = createServer(async (req, res) => {
+            if (req.method !== 'POST' || req.url !== '/v1/responses') {
+              res.writeHead(404).end()
+              return
+            }
+            let raw = ''
+            for await (const chunk of req) raw += chunk
+            const body = JSON.parse(raw || '{}')
+            if (!body.model || !body.input) {
+              res.writeHead(400, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ error: { message: 'model and input required' } }))
+              return
+            }
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({
+              id: 'resp_koda_ci',
+              output: [{
+                type: 'message',
+                content: [{ type: 'output_text', text: 'Привет. Лейтенант КОДА на связи.' }],
+              }],
+            }))
+          })
+          server.listen(8790, '127.0.0.1')
+          NODE
+
+          cat > .ci-ws-test.mjs <<'NODE'
+          import { WebSocket } from 'ws'
+          const ws = new WebSocket('ws://127.0.0.1:8789')
+          let text = ''
+          let asked = false
+          const timeout = setTimeout(() => {
+            console.error('Timed out waiting for JARVIS response')
+            process.exit(1)
+          }, 7000)
+          ws.on('message', (raw) => {
+            const msg = JSON.parse(raw.toString())
+            if (msg.type === 'ready' && !asked) {
+              asked = true
+              ws.send(JSON.stringify({ type: 'ask', id: 'ci1', text: 'Джарвис, ты на связи?' }))
+              return
+            }
+            if (msg.ask && msg.ask !== 'ci1') return
+            if (msg.type === 'text') text += msg.delta ?? ''
+            if (msg.type === 'error') {
+              console.error(msg.message)
+              process.exit(1)
+            }
+            if (msg.type === 'done') {
+              clearTimeout(timeout)
+              if (!text.includes('Лейтенант КОДА')) {
+                console.error(`Unexpected response: ${text}`)
+                process.exit(1)
+              }
+              console.log(`JARVIS transport response passed: ${text}`)
+              ws.close()
+            }
+          })
+          ws.on('close', () => process.exit(0))
+          ws.on('error', (err) => {
+            console.error(err)
+            process.exit(1)
+          })
+          NODE
+
+          node .ci-mock-openai.mjs > /tmp/mock-openai.log 2>&1 &
+          MOCK_PID=$!
+          OPENAI_BASE_URL=http://127.0.0.1:8790/v1 \
+          OPENAI_API_KEY=ci-test-key \
+          JARVIS_BRIDGE_PORT=8789 \
+          JARVIS_ALLOW_NO_ORIGIN=1 \
+          node bridge/openai-koda.mjs > /tmp/jarvis-openai-integration.log 2>&1 &
+          BRIDGE_PID=$!
+          trap 'kill $BRIDGE_PID $MOCK_PID 2>/dev/null || true' EXIT
+          sleep 1
+          node .ci-ws-test.mjs
+          rm -f .ci-mock-openai.mjs .ci-ws-test.mjs
+
       - name: Add install guide to package
         run: cp INSTALL-RU.md jarvis-koda/INSTALL-RU.md
 
